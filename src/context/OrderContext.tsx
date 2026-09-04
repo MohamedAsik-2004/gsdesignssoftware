@@ -7,11 +7,13 @@ import {
   PaymentTransaction, 
   PaymentMode, 
   Customer, 
-  DailyClosingReport 
+  DailyClosingReport,
+  TerminalChatMessage,
+  UserRole
 } from '../types';
 import { INITIAL_ORDERS, INITIAL_NOTIFICATIONS, INITIAL_CUSTOMERS } from '../data/initialData';
 import { useAuth } from './AuthContext';
-import { socket, joinDeskRoom, sendDesignerMessage, emitOrderUpdate } from '../services/socket';
+import { socket, joinDeskRoom, sendDesignerMessage, emitOrderUpdate, emitTerminalChat } from '../services/socket';
 import { soundEngine } from '../utils/sound';
 import { 
   fetchOrdersApi, 
@@ -34,6 +36,7 @@ interface OrderContextType {
   orders: Order[];
   customers: Customer[];
   notifications: SystemNotification[];
+  chatMessages: TerminalChatMessage[];
   toasts: ActiveToast[];
   createOrder: (orderData: Partial<Order>) => void;
   markDesignReady: (orderId: string, proofUrl: string, proofName: string, notes: string) => void;
@@ -46,6 +49,8 @@ interface OrderContextType {
   completeOrder: (orderId: string, invoiceNo?: string, paymentMethod?: PaymentMode) => void;
   reassignDesigner: (orderId: string, designerId: string, designerName: string) => void;
   sendDesignerDirectMessage: (orderId: string, message: string) => Promise<void>;
+  sendTerminalChatMessage: (targetRole: UserRole | 'ALL', text: string, orderId?: string, isUrgent?: boolean) => void;
+  clearChatMessages: () => void;
   deleteOrder: (orderId: string) => void;
   updateOrderStatus: (orderId: string, status: OrderStatus, notes?: string) => void;
   getDailyClosingReport: () => DailyClosingReport;
@@ -94,6 +99,27 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
     return INITIAL_NOTIFICATIONS;
+  });
+
+  const [chatMessages, setChatMessages] = useState<TerminalChatMessage[]>(() => {
+    const saved = localStorage.getItem('gs_terminal_chats');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return [
+      {
+        id: 'init-1',
+        senderName: 'System Admin',
+        senderRole: 'ADMIN',
+        targetRole: 'ALL',
+        text: 'System online. All terminal stations (Admin, Designer, Press Room, Billing Desk) connected.',
+        timestamp: new Date().toISOString()
+      }
+    ];
   });
 
   const [toasts, setToasts] = useState<ActiveToast[]>([]);
@@ -223,11 +249,31 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       );
     };
 
+    // Socket Event: Terminal Live Chat Received
+    const handleTerminalChat = (data: TerminalChatMessage) => {
+      setChatMessages(prev => {
+        if (prev.some(m => m.id === data.id)) return prev;
+        return [...prev, data];
+      });
+
+      if (data.senderName !== currentUser.name) {
+        soundEngine.playMessageSound();
+        if (data.targetRole === 'ALL' || data.targetRole === currentUser.role) {
+          showToast(
+            `💬 Message from ${data.senderRole} (${data.senderName})`,
+            data.text,
+            'info'
+          );
+        }
+      }
+    };
+
     socket.on('order:created', handleOrderCreated);
     socket.on('order:updated', handleOrderUpdated);
     socket.on('order:deleted', handleOrderDeleted);
     socket.on('terminal_announcement', handleAnnouncement);
     socket.on('designer_message_received', handleDesignerMessage);
+    socket.on('terminal_chat_received', handleTerminalChat);
 
     return () => {
       socket.off('order:created', handleOrderCreated);
@@ -235,8 +281,9 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       socket.off('order:deleted', handleOrderDeleted);
       socket.off('terminal_announcement', handleAnnouncement);
       socket.off('designer_message_received', handleDesignerMessage);
+      socket.off('terminal_chat_received', handleTerminalChat);
     };
-  }, [currentUser.role]);
+  }, [currentUser.role, currentUser.name]);
 
   useEffect(() => {
     localStorage.setItem('gs_orders_data', JSON.stringify(orders));
@@ -249,6 +296,35 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     localStorage.setItem('gs_notifications_data', JSON.stringify(notifications));
   }, [notifications]);
+
+  useEffect(() => {
+    localStorage.setItem('gs_terminal_chats', JSON.stringify(chatMessages));
+  }, [chatMessages]);
+
+  const sendTerminalChatMessage = (targetRole: UserRole | 'ALL', text: string, orderId?: string, isUrgent?: boolean) => {
+    if (!text.trim()) return;
+    const now = new Date().toISOString();
+    const chatData: TerminalChatMessage = {
+      id: 'chat-' + Date.now(),
+      senderName: currentUser.name,
+      senderRole: currentUser.role,
+      targetRole,
+      text: text.trim(),
+      orderId,
+      timestamp: now,
+      isUrgent
+    };
+
+    // Append locally & broadcast to all terminals
+    setChatMessages(prev => [...prev, chatData]);
+    emitTerminalChat(chatData);
+    soundEngine.playChime();
+  };
+
+  const clearChatMessages = () => {
+    setChatMessages([]);
+    localStorage.removeItem('gs_terminal_chats');
+  };
 
   const showToast = (title: string, message: string, type: 'success' | 'warning' | 'info' | 'ready' = 'info') => {
     const id = 'toast-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
@@ -891,6 +967,7 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       orders,
       customers,
       notifications,
+      chatMessages,
       toasts,
       createOrder,
       markDesignReady,
@@ -903,6 +980,8 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       completeOrder,
       reassignDesigner,
       sendDesignerDirectMessage,
+      sendTerminalChatMessage,
+      clearChatMessages,
       deleteOrder,
       updateOrderStatus,
       getDailyClosingReport,

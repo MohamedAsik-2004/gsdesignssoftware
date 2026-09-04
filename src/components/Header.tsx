@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useOrders } from '../context/OrderContext';
 import { UserRole } from '../types';
+import { InterDeskChatModal } from './InterDeskChatModal';
 import { 
   Printer, 
   Palette, 
@@ -13,20 +14,27 @@ import {
   CheckCheck, 
   UserCheck, 
   LogOut,
-  Sparkles
+  Sparkles,
+  MessageSquare
 } from 'lucide-react';
 
 export const Header: React.FC = () => {
   const { currentUser, users, loginAs } = useAuth();
-  const { notifications, markNotificationAsRead, clearAllNotifications } = useOrders();
+  const { notifications, chatMessages, markNotificationAsRead, clearAllNotifications } = useOrders();
   const [showNotifMenu, setShowNotifMenu] = useState(false);
   const [showRoleMenu, setShowRoleMenu] = useState(false);
+  const [showChatModal, setShowChatModal] = useState(false);
 
   // Filter notifications for current user role or ALL
   const userNotifs = notifications.filter(n => 
     n.roleTarget === 'ALL' || n.roleTarget === currentUser.role
   );
   const unreadCount = userNotifs.filter(n => !n.isRead).length;
+
+  // Terminal Chat count
+  const chatCount = chatMessages.filter(m => 
+    m.targetRole === 'ALL' || m.targetRole === currentUser.role
+  ).length;
 
   const getRoleIcon = (role: UserRole) => {
     switch (role) {
@@ -101,8 +109,32 @@ export const Header: React.FC = () => {
             </div>
           </div>
 
-          {/* Right Controls: Notifications & Switch Desk */}
+          {/* Right Controls: Notifications & Inter-Desk Chat */}
           <div className="flex items-center space-x-3 sm:space-x-4">
+            
+            {/* 4-Way Terminal Messenger Button */}
+            <button 
+              onClick={() => setShowChatModal(true)}
+              className="relative p-2.5 rounded-xl bg-indigo-950/60 hover:bg-indigo-900/80 text-indigo-300 hover:text-white transition-all border border-indigo-500/40 shadow-lg shadow-indigo-950/30 flex items-center space-x-2 group"
+              aria-label="Terminal Messenger"
+              title="Open 4-Way Inter-Desk Terminal Messenger"
+            >
+              <MessageSquare className="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform" />
+              <span className="hidden md:inline text-xs font-extrabold tracking-wide text-indigo-200">
+                TERMINAL CHAT
+              </span>
+              {chatCount > 0 && (
+                <span className="w-5 h-5 bg-indigo-600 text-white font-bold text-[10px] rounded-full flex items-center justify-center shadow-lg shadow-indigo-600/50">
+                  {chatCount}
+                </span>
+              )}
+            </button>
+
+            {/* Inter-Desk Chat Modal */}
+            <InterDeskChatModal 
+              isOpen={showChatModal} 
+              onClose={() => setShowChatModal(false)} 
+            />
             
             {/* Notification Bell */}
             <div className="relative">

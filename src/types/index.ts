@@ -176,3 +176,15 @@ export interface SystemNotification {
   roleTarget: UserRole | 'ALL';
   createdAt: string;
 }
+
+export interface TerminalChatMessage {
+  id: string;
+  senderName: string;
+  senderRole: UserRole;
+  targetRole: UserRole | 'ALL';
+  text: string;
+  orderId?: string;
+  jobNo?: string;
+  timestamp: string;
+  isUrgent?: boolean;
+}

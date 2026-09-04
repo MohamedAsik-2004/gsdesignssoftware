@@ -66,3 +66,19 @@ export const emitOrderUpdate = (order: any) => {
     socket.emit('update_order', order);
   }
 };
+
+export const emitTerminalChat = (chatData: {
+  id: string;
+  senderName: string;
+  senderRole: string;
+  targetRole: string;
+  text: string;
+  orderId?: string;
+  jobNo?: string;
+  timestamp: string;
+  isUrgent?: boolean;
+}) => {
+  if (socket.connected) {
+    socket.emit('send_terminal_chat', chatData);
+  }
+};

@@ -52,6 +52,22 @@ export const initSocket = (httpServer: HttpServer) => {
       });
     });
 
+    // Handle Direct 4-Way Terminal Chat Message
+    socket.on('send_terminal_chat', (chatData: {
+      id: string;
+      senderName: string;
+      senderRole: string;
+      targetRole: string;
+      text: string;
+      orderId?: string;
+      jobNo?: string;
+      timestamp: string;
+      isUrgent?: boolean;
+    }) => {
+      console.log(`💬 Terminal Chat [${chatData.senderRole} ➔ ${chatData.targetRole}]: ${chatData.text}`);
+      io.emit('terminal_chat_received', chatData);
+    });
+
     // Handle disconnect
     socket.on('disconnect', () => {
       console.log(`❌ Desk Terminal Disconnected: ${socket.id}`);
