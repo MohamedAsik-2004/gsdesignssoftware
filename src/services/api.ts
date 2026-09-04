@@ -142,6 +142,15 @@ export async function deleteOrderApi(id: string): Promise<boolean> {
   return data.success;
 }
 
+// 7b. Send Direct Message / Instruction on Order
+export async function sendOrderMessageApi(id: string, message: string): Promise<Order> {
+  const data = await request<{ success: boolean; order: Order }>(`/orders/${id}/message`, {
+    method: 'POST',
+    body: JSON.stringify({ message })
+  });
+  return data.order;
+}
+
 // 8. Customers API
 export async function fetchCustomersApi() {
   return request<{ success: boolean; customers: any[] }>('/customers');

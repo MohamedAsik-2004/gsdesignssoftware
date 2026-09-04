@@ -14,7 +14,8 @@ orderRouter.get('/', (req: AuthRequest, res: Response) => {
 
 // GET Single Order
 orderRouter.get('/:id', (req: AuthRequest, res: Response) => {
-  const order = db.getOrderById(req.params.id);
+  const orderId = req.params.id as string;
+  const order = db.getOrderById(orderId);
   if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
   return res.json({ success: true, order });
 });
@@ -40,22 +41,27 @@ orderRouter.post('/', authenticateJWT, (req: AuthRequest, res: Response) => {
   return res.status(201).json({ success: true, message: 'Order created successfully', order: newOrder });
 });
 
-// PUT Update Order Status & Workflow Progress
-orderRouter.put('/:id/status', authenticateJWT, (req: AuthRequest, res: Response) => {
-  const { status, notes, proofUrl, proofName } = req.body as {
-    status: OrderStatus;
+// PUT / PATCH Update Order Status & Workflow Progress
+const handleUpdateStatus = (req: AuthRequest, res: Response) => {
+  const { status, notes, proofUrl, proofName, assignedDesignerId, assignedDesigner } = req.body as {
+    status?: OrderStatus;
     notes?: string;
     proofUrl?: string;
     proofName?: string;
+    assignedDesignerId?: string;
+    assignedDesigner?: string;
   };
 
   const currentUser = db.getUserById(req.user!.id) || { id: 'u-1', name: 'User', role: 'ADMIN' };
 
-  const updates: any = { status };
+  const updates: any = {};
+  if (status) updates.status = status;
   if (proofUrl) updates.proofUrl = proofUrl;
   if (proofName) updates.proofName = proofName;
+  if (assignedDesignerId) updates.designerId = assignedDesignerId;
+  if (assignedDesigner) updates.designerName = assignedDesigner;
 
-  const updatedOrder = db.updateOrder(req.params.id, updates, currentUser as any, notes);
+  const updatedOrder = db.updateOrder(req.params.id as string, updates, currentUser as any, notes);
   if (!updatedOrder) return res.status(404).json({ success: false, message: 'Order not found' });
 
   // Generate role notification based on status
@@ -92,19 +98,27 @@ orderRouter.put('/:id/status', authenticateJWT, (req: AuthRequest, res: Response
   // Emit Socket.io real-time update
   io.emit('order:updated', { order: updatedOrder, notification: notif });
 
-  return res.json({ success: true, message: `Order status updated to ${status}`, order: updatedOrder });
-});
+  return res.json({ success: true, message: `Order status updated`, order: updatedOrder });
+};
 
-// PUT Record Payment
-orderRouter.put('/:id/payment', authenticateJWT, (req: AuthRequest, res: Response) => {
-  const { amount, paymentMode, transactionRef, notes } = req.body as {
-    amount: number;
+orderRouter.put('/:id/status', authenticateJWT, handleUpdateStatus);
+orderRouter.patch('/:id/status', authenticateJWT, handleUpdateStatus);
+
+// PUT / PATCH Record Payment
+const handleRecordPayment = (req: AuthRequest, res: Response) => {
+  const { amount, advancePaid, paymentMode, transactionRef, notes, note } = req.body as {
+    amount?: number;
+    advancePaid?: number;
     paymentMode: PaymentMode;
     transactionRef?: string;
     notes?: string;
+    note?: string;
   };
 
-  const order = db.getOrderById(req.params.id);
+  const paymentAmount = amount || advancePaid || 0;
+
+  const orderId = req.params.id as string;
+  const order = db.getOrderById(orderId);
   if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
 
   const currentUser = db.getUserById(req.user!.id) || { id: 'u-1', name: 'User', role: 'BILLING' };
@@ -114,16 +128,16 @@ orderRouter.put('/:id/payment', authenticateJWT, (req: AuthRequest, res: Respons
     id: 'pay-' + Date.now(),
     orderId: order.id,
     jobNo: order.jobNo,
-    amount,
+    amount: paymentAmount,
     paymentMode,
     transactionRef,
     receivedBy: currentUser.name,
     createdAt: now,
-    notes
+    notes: notes || note
   };
 
   const updatedPayments = [...(order.payments || []), newPayment];
-  const newAdvance = order.advancePaid + amount;
+  const newAdvance = order.advancePaid + paymentAmount;
   const newDue = Math.max(0, order.totalAmount - newAdvance);
   const isComplete = newDue === 0;
 
@@ -137,14 +151,14 @@ orderRouter.put('/:id/payment', authenticateJWT, (req: AuthRequest, res: Respons
       status: isComplete ? 'COMPLETED' : order.status
     },
     currentUser as any,
-    `Received payment of ₹${amount} via ${paymentMode}. Balance due: ₹${newDue}.`
+    `Received payment of ₹${paymentAmount} via ${paymentMode}. Balance due: ₹${newDue}.`
   );
 
   const notif = db.createNotification({
     orderId: order.id,
     jobNo: order.jobNo,
     title: '💰 Payment Recorded!',
-    message: `₹${amount} collected for ${order.jobNo} via ${paymentMode}.`,
+    message: `₹${paymentAmount} collected for ${order.jobNo} via ${paymentMode}.`,
     type: 'PAYMENT_RECEIVED',
     roleTarget: 'ADMIN'
   });
@@ -152,15 +166,18 @@ orderRouter.put('/:id/payment', authenticateJWT, (req: AuthRequest, res: Respons
   io.emit('order:updated', { order: updatedOrder, notification: notif });
 
   return res.json({ success: true, message: 'Payment recorded successfully', order: updatedOrder });
-});
+};
 
-// PUT Reassign Designer
-orderRouter.put('/:id/reassign', authenticateJWT, (req: AuthRequest, res: Response) => {
+orderRouter.put('/:id/payment', authenticateJWT, handleRecordPayment);
+orderRouter.patch('/:id/payment', authenticateJWT, handleRecordPayment);
+
+// PUT / PATCH Reassign Designer
+const handleReassign = (req: AuthRequest, res: Response) => {
   const { designerId, designerName } = req.body;
   const currentUser = db.getUserById(req.user!.id) || { id: 'u-1', name: 'Admin', role: 'ADMIN' };
 
   const updatedOrder = db.updateOrder(
-    req.params.id,
+    req.params.id as string,
     { designerId, designerName, status: 'ASSIGNED_TO_DESIGNER' },
     currentUser as any,
     `Reassigned to ${designerName}`
@@ -171,14 +188,65 @@ orderRouter.put('/:id/reassign', authenticateJWT, (req: AuthRequest, res: Respon
   io.emit('order:updated', { order: updatedOrder });
 
   return res.json({ success: true, message: `Reassigned to ${designerName}`, order: updatedOrder });
-});
+};
+
+orderRouter.put('/:id/reassign', authenticateJWT, handleReassign);
+orderRouter.patch('/:id/reassign', authenticateJWT, handleReassign);
+
+// POST / PUT / PATCH Direct Message / Instruction to Designer
+const handleSendMessage = (req: AuthRequest, res: Response) => {
+  const { message } = req.body;
+  if (!message || !message.trim()) {
+    return res.status(400).json({ success: false, message: 'Message text is required' });
+  }
+
+  const currentUser = db.getUserById(req.user!.id) || { id: 'u-1', name: 'Admin', role: 'ADMIN' };
+  const orderId = req.params.id as string;
+  const order = db.getOrderById(orderId);
+  if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+
+  const updatedOrder = db.updateOrder(
+    req.params.id as string,
+    {},
+    currentUser as any,
+    `💬 ${currentUser.name}: ${message.trim()}`
+  );
+
+  const notif = db.createNotification({
+    orderId: order.id,
+    jobNo: order.jobNo,
+    title: `💬 Admin Message on ${order.jobNo}`,
+    message: `${currentUser.name}: "${message.trim()}"`,
+    type: 'ASSIGNED',
+    roleTarget: 'DESIGNER'
+  });
+
+  io.emit('order:updated', { order: updatedOrder, notification: notif });
+  io.emit('designer_message_received', {
+    id: 'msg-' + Date.now(),
+    orderId: order.id,
+    jobNo: order.jobNo,
+    designerId: order.designerId,
+    designerName: order.designerName,
+    senderName: currentUser.name,
+    message: message.trim(),
+    timestamp: new Date().toISOString()
+  });
+
+  return res.json({ success: true, message: 'Message sent to designer', order: updatedOrder });
+};
+
+orderRouter.post('/:id/message', authenticateJWT, handleSendMessage);
+orderRouter.put('/:id/message', authenticateJWT, handleSendMessage);
+orderRouter.patch('/:id/message', authenticateJWT, handleSendMessage);
 
 // DELETE Order
 orderRouter.delete('/:id', authenticateJWT, (req: AuthRequest, res: Response) => {
-  const success = db.deleteOrder(req.params.id);
+  const id = req.params.id as string;
+  const success = db.deleteOrder(id);
   if (!success) return res.status(404).json({ success: false, message: 'Order not found' });
 
-  io.emit('order:deleted', { id: req.params.id });
+  io.emit('order:deleted', { id });
 
   return res.json({ success: true, message: 'Order deleted successfully' });
 });

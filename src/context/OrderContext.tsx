@@ -11,7 +11,7 @@ import {
 } from '../types';
 import { INITIAL_ORDERS, INITIAL_NOTIFICATIONS, INITIAL_CUSTOMERS } from '../data/initialData';
 import { useAuth } from './AuthContext';
-import { socket, joinDeskRoom } from '../services/socket';
+import { socket, joinDeskRoom, sendDesignerMessage, emitOrderUpdate } from '../services/socket';
 import { soundEngine } from '../utils/sound';
 import { 
   fetchOrdersApi, 
@@ -19,7 +19,8 @@ import {
   updateOrderStatusApi, 
   recordPaymentApi, 
   reassignDesignerApi, 
-  deleteOrderApi 
+  deleteOrderApi,
+  sendOrderMessageApi
 } from '../services/api';
 
 interface ActiveToast {
@@ -36,11 +37,15 @@ interface OrderContextType {
   toasts: ActiveToast[];
   createOrder: (orderData: Partial<Order>) => void;
   markDesignReady: (orderId: string, proofUrl: string, proofName: string, notes: string) => void;
+  approveDesignAndSendToPress: (orderId: string, notes?: string) => void;
+  markPrintingCompleted: (orderId: string, notes?: string) => void;
+  sendToBillingDesk: (orderId: string, notes?: string) => void;
   forwardToBilling: (orderId: string, notes?: string) => void;
   recordPayment: (orderId: string, amount: number, paymentMode: PaymentMode, transactionRef?: string, notes?: string) => void;
   updateGstAndInvoice: (orderId: string, gstPercent: number, discount?: number) => void;
   completeOrder: (orderId: string, invoiceNo?: string, paymentMethod?: PaymentMode) => void;
   reassignDesigner: (orderId: string, designerId: string, designerName: string) => void;
+  sendDesignerDirectMessage: (orderId: string, message: string) => Promise<void>;
   deleteOrder: (orderId: string) => void;
   updateOrderStatus: (orderId: string, status: OrderStatus, notes?: string) => void;
   getDailyClosingReport: () => DailyClosingReport;
@@ -185,16 +190,51 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       );
     };
 
+    // Socket Event: Direct Message to Designer
+    const handleDesignerMessage = (data: {
+      id: string;
+      orderId: string;
+      jobNo: string;
+      designerId: string;
+      designerName: string;
+      senderName: string;
+      message: string;
+      timestamp: string;
+    }) => {
+      soundEngine.playMessageSound();
+
+      const notif: SystemNotification = {
+        id: data.id,
+        orderId: data.orderId,
+        jobNo: data.jobNo,
+        title: `💬 Direct Message from ${data.senderName}`,
+        message: data.message,
+        type: 'ASSIGNED',
+        isRead: false,
+        roleTarget: 'DESIGNER',
+        createdAt: data.timestamp
+      };
+
+      setNotifications(prev => [notif, ...prev]);
+      showToast(
+        `💬 Admin Message (${data.jobNo})`,
+        `${data.senderName}: ${data.message}`,
+        'info'
+      );
+    };
+
     socket.on('order:created', handleOrderCreated);
     socket.on('order:updated', handleOrderUpdated);
     socket.on('order:deleted', handleOrderDeleted);
     socket.on('terminal_announcement', handleAnnouncement);
+    socket.on('designer_message_received', handleDesignerMessage);
 
     return () => {
       socket.off('order:created', handleOrderCreated);
       socket.off('order:updated', handleOrderUpdated);
       socket.off('order:deleted', handleOrderDeleted);
       socket.off('terminal_announcement', handleAnnouncement);
+      socket.off('designer_message_received', handleDesignerMessage);
     };
   }, [currentUser.role]);
 
@@ -406,8 +446,131 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   };
 
-  // 3. Forward to Billing / Printing Desk (Admin Action!)
-  const forwardToBilling = async (orderId: string, notes?: string) => {
+  // 3. Admin Action: Approve Design Proof & Send to Press Room
+  const approveDesignAndSendToPress = async (orderId: string, notes?: string) => {
+    try {
+      await updateOrderStatusApi(orderId, 'PRINTING_IN_PROGRESS', notes);
+    } catch (e) {
+      console.warn('Backend update failed, applying locally', e);
+    }
+
+    const now = new Date().toISOString();
+    let updatedOrder: Order | undefined;
+
+    setOrders(prev => prev.map(order => {
+      if (order.id === orderId) {
+        const timelineEntry: TimelineEntry = {
+          id: 't-' + Date.now(),
+          status: 'PRINTING_IN_PROGRESS',
+          timestamp: now,
+          updatedBy: currentUser.name,
+          role: currentUser.role,
+          notes: notes || 'Admin approved design proof and sent order to Press Room.'
+        };
+
+        updatedOrder = {
+          ...order,
+          status: 'PRINTING_IN_PROGRESS',
+          adminNotes: notes || order.adminNotes,
+          updatedAt: now,
+          timeline: [...order.timeline, timelineEntry]
+        };
+        return updatedOrder;
+      }
+      return order;
+    }));
+
+    const targetOrder = updatedOrder || orders.find(o => o.id === orderId);
+    if (targetOrder) {
+      emitOrderUpdate(targetOrder);
+    }
+
+    soundEngine.playChime();
+
+    const notif: SystemNotification = {
+      id: 'notif-' + Date.now(),
+      orderId,
+      jobNo: targetOrder?.jobNo || '',
+      title: '🖨️ Order Sent to Press Room',
+      message: `Job ${targetOrder?.jobNo} (${targetOrder?.title}) approved by Admin. Printing in progress!`,
+      type: 'PRINTING_STARTED',
+      isRead: false,
+      roleTarget: 'PRINTING',
+      createdAt: now
+    };
+
+    setNotifications(prev => [notif, ...prev]);
+
+    showToast(
+      'Sent to Press Room!',
+      `Job ${targetOrder?.jobNo} transferred to Press Room for printing.`,
+      'info'
+    );
+  };
+
+  // 4. Press Room Action: Mark Printing Completed
+  const markPrintingCompleted = async (orderId: string, notes?: string) => {
+    try {
+      await updateOrderStatusApi(orderId, 'PRINT_READY', notes);
+    } catch (e) {
+      console.warn('Backend update failed, applying locally', e);
+    }
+
+    const now = new Date().toISOString();
+    let updatedOrder: Order | undefined;
+
+    setOrders(prev => prev.map(order => {
+      if (order.id === orderId) {
+        const timelineEntry: TimelineEntry = {
+          id: 't-' + Date.now(),
+          status: 'PRINT_READY',
+          timestamp: now,
+          updatedBy: currentUser.name,
+          role: currentUser.role,
+          notes: notes || 'Press Room completed physical printing output.'
+        };
+
+        updatedOrder = {
+          ...order,
+          status: 'PRINT_READY',
+          updatedAt: now,
+          timeline: [...order.timeline, timelineEntry]
+        };
+        return updatedOrder;
+      }
+      return order;
+    }));
+
+    const targetOrder = updatedOrder || orders.find(o => o.id === orderId);
+    if (targetOrder) {
+      emitOrderUpdate(targetOrder);
+    }
+
+    soundEngine.playAlertSound();
+
+    const notif: SystemNotification = {
+      id: 'notif-' + Date.now(),
+      orderId,
+      jobNo: targetOrder?.jobNo || '',
+      title: '✅ Printing Completed by Press Room',
+      message: `Job ${targetOrder?.jobNo} output ready! Admin can now route to Billing.`,
+      type: 'PRINT_READY',
+      isRead: false,
+      roleTarget: 'ADMIN',
+      createdAt: now
+    };
+
+    setNotifications(prev => [notif, ...prev]);
+
+    showToast(
+      'Print Completed!',
+      `Job ${targetOrder?.jobNo} printing output is ready.`,
+      'ready'
+    );
+  };
+
+  // 5. Forward to Billing / Printing Desk (Admin Action!)
+  const sendToBillingDesk = async (orderId: string, notes?: string) => {
     try {
       await updateOrderStatusApi(orderId, 'FORWARDED_TO_BILLING', notes);
     } catch (e) {
@@ -415,6 +578,7 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     const now = new Date().toISOString();
+    let updatedOrder: Order | undefined;
 
     setOrders(prev => prev.map(order => {
       if (order.id === orderId) {
@@ -427,18 +591,25 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           notes: notes || 'Approved design proof and forwarded order to billing desk.'
         };
 
-        return {
+        updatedOrder = {
           ...order,
           status: 'FORWARDED_TO_BILLING',
-          adminNotes: notes,
+          adminNotes: notes || order.adminNotes,
           updatedAt: now,
           timeline: [...order.timeline, timelineEntry]
         };
+        return updatedOrder;
       }
       return order;
     }));
 
-    const targetOrder = orders.find(o => o.id === orderId);
+    const targetOrder = updatedOrder || orders.find(o => o.id === orderId);
+    if (targetOrder) {
+      emitOrderUpdate(targetOrder);
+    }
+
+    soundEngine.playChime();
+
     const notif: SystemNotification = {
       id: 'notif-' + Date.now(),
       orderId,
@@ -459,6 +630,8 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       'success'
     );
   };
+
+  const forwardToBilling = sendToBillingDesk;
 
   // 4. Record Payment & Balance Settlement (Billing Desk)
   const recordPayment = async (
@@ -601,6 +774,29 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast('Designer Reassigned', `Job reassigned to ${designerName}`, 'info');
   };
 
+  // 7b. Direct Message to Designer
+  const sendDesignerDirectMessage = async (orderId: string, message: string) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+
+    try {
+      await sendOrderMessageApi(orderId, message);
+    } catch (e) {
+      console.warn('Backend message endpoint failed, emitting via socket', e);
+    }
+
+    sendDesignerMessage({
+      orderId: order.id,
+      jobNo: order.jobNo,
+      designerId: order.designerId,
+      designerName: order.designerName,
+      senderName: currentUser.name,
+      message
+    });
+
+    showToast('Instruction Sent', `Message sent to ${order.designerName} for ${order.jobNo}`, 'success');
+  };
+
   // Generic Order Status Updater (e.g. Press Room & Custom Desks)
   const updateOrderStatus = async (orderId: string, status: OrderStatus, notes?: string) => {
     try {
@@ -698,11 +894,15 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       toasts,
       createOrder,
       markDesignReady,
+      approveDesignAndSendToPress,
+      markPrintingCompleted,
+      sendToBillingDesk,
       forwardToBilling,
       recordPayment,
       updateGstAndInvoice,
       completeOrder,
       reassignDesigner,
+      sendDesignerDirectMessage,
       deleteOrder,
       updateOrderStatus,
       getDailyClosingReport,

@@ -35,6 +35,23 @@ export const initSocket = (httpServer: HttpServer) => {
       });
     });
 
+    // Handle Direct Message / Instruction to Designer
+    socket.on('send_designer_message', (data: {
+      orderId: string;
+      jobNo: string;
+      designerId: string;
+      designerName: string;
+      senderName: string;
+      message: string;
+    }) => {
+      console.log(`💬 Direct Message to Designer (${data.designerName}) from ${data.senderName}: ${data.message}`);
+      io.emit('designer_message_received', {
+        id: 'msg-' + Date.now(),
+        ...data,
+        timestamp: new Date().toISOString()
+      });
+    });
+
     // Handle disconnect
     socket.on('disconnect', () => {
       console.log(`❌ Desk Terminal Disconnected: ${socket.id}`);

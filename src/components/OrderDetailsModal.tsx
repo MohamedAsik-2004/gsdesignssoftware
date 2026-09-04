@@ -32,11 +32,22 @@ interface OrderDetailsModalProps {
 
 export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onClose }) => {
   const { currentUser, users } = useAuth();
-  const { markDesignReady, forwardToBilling, completeOrder, deleteOrder, recordPayment } = useOrders();
+  const { 
+    markDesignReady, 
+    approveDesignAndSendToPress,
+    markPrintingCompleted,
+    sendToBillingDesk,
+    forwardToBilling, 
+    completeOrder, 
+    deleteOrder, 
+    recordPayment, 
+    sendDesignerDirectMessage 
+  } = useOrders();
 
   const [proofUrl, setProofUrl] = useState('');
   const [designerNotesInput, setDesignerNotesInput] = useState('');
   const [adminNotesInput, setAdminNotesInput] = useState('');
+  const [directInstructionText, setDirectInstructionText] = useState('');
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
 
@@ -51,6 +62,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onC
   const isDesigner = currentUser.role === 'DESIGNER';
   const isAdmin = currentUser.role === 'ADMIN';
   const isBilling = currentUser.role === 'BILLING';
+  const isPrinting = currentUser.role === 'PRINTING';
 
   const designers = users.filter(u => u.role === 'DESIGNER');
 
@@ -239,6 +251,46 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onC
                 </div>
               )}
 
+              {/* ADMIN DIRECT INSTRUCTION TO DESIGNER */}
+              {isAdmin && (
+                <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 space-y-3">
+                  <div className="flex items-center space-x-2">
+                    <MessageSquare className="w-4 h-4 text-amber-400" />
+                    <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                      Send Instant Instruction to Designer ({order.designerName || 'Assigned Designer'})
+                    </h4>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="text"
+                      placeholder={`Type note/instruction for ${order.designerName || 'Designer'}...`}
+                      value={directInstructionText}
+                      onChange={e => setDirectInstructionText(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && directInstructionText.trim()) {
+                          e.preventDefault();
+                          sendDesignerDirectMessage(order.id, directInstructionText.trim());
+                          setDirectInstructionText('');
+                        }
+                      }}
+                      className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!directInstructionText.trim()) return;
+                        sendDesignerDirectMessage(order.id, directInstructionText.trim());
+                        setDirectInstructionText('');
+                      }}
+                      className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all flex items-center space-x-1"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>Send</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* ACTION PANEL FOR DESIGNER: Upload & Mark Ready */}
               {isDesigner && (order.status === 'ASSIGNED_TO_DESIGNER' || order.status === 'DESIGN_IN_PROGRESS') && (
                 <form onSubmit={handleDesignerMarkReady} className="bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-900 p-5 rounded-2xl border border-amber-500/50 space-y-4">
@@ -279,44 +331,112 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({ order, onC
                 </form>
               )}
 
-              {/* ACTION PANEL FOR ADMIN: Approve & Forward to Billing */}
+              {/* ACTION PANEL FOR ADMIN: Approve & Send to Press Room */}
               {isAdmin && order.status === 'DESIGN_READY' && (
-                <div className="bg-gradient-to-br from-red-950/40 via-slate-900 to-slate-900 p-5 rounded-2xl border border-red-500/80 space-y-4">
+                <div className="bg-gradient-to-br from-indigo-950/50 via-slate-900 to-slate-900 p-5 rounded-2xl border border-indigo-500/80 space-y-4">
                   <div className="flex items-center space-x-2">
-                    <Sparkles className="w-5 h-5 text-red-400" />
-                    <h4 className="text-sm font-extrabold text-white">Admin Action: Review & Forward to Billing Desk</h4>
+                    <Sparkles className="w-5 h-5 text-indigo-400" />
+                    <h4 className="text-sm font-extrabold text-white">Admin Action: Review & Route to Press Room</h4>
                   </div>
                   <p className="text-xs text-slate-300">
-                    Designer has finished the proof. Click below to route this job to the Billing & Printing department.
+                    Designer has submitted the proof. Route this order to the Press Room server for physical printing.
                   </p>
 
                   <input 
                     type="text"
-                    placeholder="Optional Admin note for Billing..."
+                    placeholder="Optional Admin notes for Press Room..."
                     value={adminNotesInput}
                     onChange={e => setAdminNotesInput(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:border-red-500 focus:outline-none"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
                   />
 
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        approveDesignAndSendToPress(order.id, adminNotesInput);
+                        onClose();
+                      }}
+                      className="py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-extrabold text-xs shadow-xl shadow-indigo-900/50 transition-all flex items-center justify-center space-x-2"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span>APPROVE & SEND TO PRESS</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sendToBillingDesk(order.id, adminNotesInput);
+                        onClose();
+                      }}
+                      className="py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white font-extrabold text-xs shadow-xl shadow-emerald-900/50 transition-all flex items-center justify-center space-x-2"
+                    >
+                      <IndianRupee className="w-4 h-4" />
+                      <span>SKIP TO BILLING</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ACTION PANEL FOR PRESS ROOM: Mark Printing Completed */}
+              {(isPrinting || isAdmin) && order.status === 'PRINTING_IN_PROGRESS' && (
+                <div className="bg-gradient-to-br from-amber-950/40 via-slate-900 to-slate-900 p-5 rounded-2xl border border-amber-500/80 space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <Printer className="w-5 h-5 text-amber-400" />
+                    <h4 className="text-sm font-extrabold text-white">Press Room Action: Print Output</h4>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Physical flex/card printing is currently in progress. Click when output printing is complete.
+                  </p>
+
                   <button
-                    onClick={handleAdminForwardToBilling}
-                    className="w-full py-3 rounded-xl bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-extrabold text-sm shadow-xl shadow-red-900/50 transition-all flex items-center justify-center space-x-2"
+                    type="button"
+                    onClick={() => {
+                      markPrintingCompleted(order.id);
+                      onClose();
+                    }}
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-extrabold text-sm shadow-xl shadow-amber-900/30 transition-all flex items-center justify-center space-x-2"
                   >
-                    <Printer className="w-5 h-5" />
-                    <span>APPROVE & FORWARD TO BILLING</span>
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span>MARK PRINTING COMPLETED (PRINT READY)</span>
+                  </button>
+                </div>
+              )}
+
+              {/* ACTION PANEL FOR ADMIN: Forward Print Ready Job to Billing */}
+              {isAdmin && order.status === 'PRINT_READY' && (
+                <div className="bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 p-5 rounded-2xl border border-emerald-500/80 space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                    <h4 className="text-sm font-extrabold text-white">Admin Action: Forward Print Ready Job to Billing</h4>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Printing completed! Route job to Billing Server for customer payment & invoice print.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sendToBillingDesk(order.id, adminNotesInput);
+                      onClose();
+                    }}
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white font-extrabold text-sm shadow-xl shadow-emerald-900/50 transition-all flex items-center justify-center space-x-2"
+                  >
+                    <IndianRupee className="w-5 h-5" />
+                    <span>FORWARD TO BILLING SERVER</span>
                   </button>
                 </div>
               )}
 
               {/* ACTION PANEL FOR BILLING: Generate Invoice & Print */}
-              {isBilling && order.status === 'FORWARDED_TO_BILLING' && (
+              {(isBilling || isAdmin) && (order.status === 'FORWARDED_TO_BILLING' || order.status === 'PRINT_READY') && (
                 <div className="bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 p-5 rounded-2xl border border-emerald-500/80 space-y-4">
                   <div className="flex items-center space-x-2">
                     <Printer className="w-5 h-5 text-emerald-400" />
-                    <h4 className="text-sm font-extrabold text-white">Billing Action: Finalize Invoice & Print</h4>
+                    <h4 className="text-sm font-extrabold text-white">Billing Action: Finalize Invoice & Complete</h4>
                   </div>
 
                   <button
+                    type="button"
                     onClick={handleCompleteOrder}
                     className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white font-extrabold text-sm shadow-xl shadow-emerald-900/50 transition-all flex items-center justify-center space-x-2"
                   >

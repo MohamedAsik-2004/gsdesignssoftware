@@ -47,3 +47,22 @@ export const sendBroadcastAnnouncement = (senderName: string, senderRole: string
     });
   }
 };
+
+export const sendDesignerMessage = (data: {
+  orderId: string;
+  jobNo: string;
+  designerId: string;
+  designerName: string;
+  senderName: string;
+  message: string;
+}) => {
+  if (socket.connected) {
+    socket.emit('send_designer_message', data);
+  }
+};
+
+export const emitOrderUpdate = (order: any) => {
+  if (socket.connected) {
+    socket.emit('update_order', order);
+  }
+};
