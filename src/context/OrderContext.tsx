@@ -242,6 +242,24 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
 
       setNotifications(prev => [notif, ...prev]);
+
+      // Sync into Chat Messages drawer
+      const chatItem: TerminalChatMessage = {
+        id: data.id,
+        senderName: data.senderName,
+        senderRole: 'ADMIN',
+        targetRole: 'DESIGNER',
+        text: `[Job #${data.jobNo}] ${data.message}`,
+        orderId: data.orderId,
+        jobNo: data.jobNo,
+        timestamp: data.timestamp
+      };
+
+      setChatMessages(prev => {
+        if (prev.some(m => m.id === chatItem.id)) return prev;
+        return [...prev, chatItem];
+      });
+
       showToast(
         `💬 Admin Message (${data.jobNo})`,
         `${data.senderName}: ${data.message}`,
@@ -855,6 +873,24 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
 
+    const now = new Date().toISOString();
+    const timelineEntry: TimelineEntry = {
+      id: 't-' + Date.now(),
+      status: order.status,
+      timestamp: now,
+      updatedBy: currentUser.name,
+      role: currentUser.role,
+      notes: `💬 Admin Message: ${message.trim()}`
+    };
+
+    const updatedOrder: Order = {
+      ...order,
+      updatedAt: now,
+      timeline: [...order.timeline, timelineEntry]
+    };
+
+    setOrders(prev => prev.map(o => o.id === orderId ? updatedOrder : o));
+
     try {
       await sendOrderMessageApi(orderId, message);
     } catch (e) {
@@ -869,6 +905,9 @@ export const OrderProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       senderName: currentUser.name,
       message
     });
+
+    // Also send via Terminal Chat so Designer sees it in Terminal Chat drawer
+    sendTerminalChatMessage('DESIGNER', `[Job #${order.jobNo}] ${message.trim()}`, order.id);
 
     showToast('Instruction Sent', `Message sent to ${order.designerName} for ${order.jobNo}`, 'success');
   };

@@ -8,7 +8,10 @@ const getApiBaseUrl = () => {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     const protocol = window.location.protocol;
-    if (window.location.port === '3000') {
+    const port = window.location.port;
+
+    // Connect to port 5000/api if frontend is running on Vite/dev server (e.g. 3000, 5173, etc.)
+    if (port && port !== '5000') {
       return `${protocol}//${hostname}:5000/api`;
     }
     return `${protocol}//${window.location.host}/api`;

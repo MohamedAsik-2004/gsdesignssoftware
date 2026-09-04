@@ -8,7 +8,10 @@ const getSocketUrl = () => {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     const protocol = window.location.protocol;
-    if (window.location.port === '3000') {
+    const port = window.location.port;
+
+    // Connect to port 5000 if frontend is running on Vite/dev server (e.g. 3000, 5173, etc.)
+    if (port && port !== '5000') {
       return `${protocol}//${hostname}:5000`;
     }
     return `${protocol}//${window.location.host}`;
@@ -20,32 +23,48 @@ const SOCKET_SERVER_URL = getSocketUrl();
 
 export const socket: Socket = io(SOCKET_SERVER_URL, {
   autoConnect: true,
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
   transports: ['websocket', 'polling']
 });
 
+let activeRole = 'ADMIN';
+
 socket.on('connect', () => {
   console.log(`⚡ Connected to GS Designs Real-time Server [Socket ID: ${socket.id}]`);
+  if (activeRole) {
+    socket.emit('join_desk', activeRole);
+  }
 });
 
-socket.on('disconnect', () => {
-  console.log('⚠️ Disconnected from GS Designs Real-time Server');
+socket.on('disconnect', (reason) => {
+  console.warn(`⚠️ Disconnected from GS Designs Real-time Server (${reason}). Reconnecting...`);
 });
 
 export const joinDeskRoom = (role: string) => {
+  activeRole = role;
   if (socket.connected) {
     socket.emit('join_desk', role);
+  } else {
+    socket.connect();
   }
 };
 
-export const sendBroadcastAnnouncement = (senderName: string, senderRole: string, message: string, urgent: boolean = false) => {
-  if (socket.connected) {
-    socket.emit('send_announcement', {
-      senderName,
-      senderRole,
-      message,
-      urgent
-    });
+const safeEmit = (event: string, data: any) => {
+  if (!socket.connected) {
+    socket.connect();
   }
+  socket.emit(event, data);
+};
+
+export const sendBroadcastAnnouncement = (senderName: string, senderRole: string, message: string, urgent: boolean = false) => {
+  safeEmit('send_announcement', {
+    senderName,
+    senderRole,
+    message,
+    urgent
+  });
 };
 
 export const sendDesignerMessage = (data: {
@@ -56,15 +75,11 @@ export const sendDesignerMessage = (data: {
   senderName: string;
   message: string;
 }) => {
-  if (socket.connected) {
-    socket.emit('send_designer_message', data);
-  }
+  safeEmit('send_designer_message', data);
 };
 
 export const emitOrderUpdate = (order: any) => {
-  if (socket.connected) {
-    socket.emit('update_order', order);
-  }
+  safeEmit('update_order', order);
 };
 
 export const emitTerminalChat = (chatData: {
@@ -78,7 +93,5 @@ export const emitTerminalChat = (chatData: {
   timestamp: string;
   isUrgent?: boolean;
 }) => {
-  if (socket.connected) {
-    socket.emit('send_terminal_chat', chatData);
-  }
+  safeEmit('send_terminal_chat', chatData);
 };
