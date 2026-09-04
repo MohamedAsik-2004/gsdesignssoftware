@@ -6,15 +6,7 @@ const getSocketUrl = () => {
     return metaEnv.VITE_SOCKET_URL;
   }
   if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    const protocol = window.location.protocol;
-    const port = window.location.port;
-
-    // Connect to port 5000 if frontend is running on Vite/dev server (e.g. 3000, 5173, etc.)
-    if (port && port !== '5000') {
-      return `${protocol}//${hostname}:5000`;
-    }
-    return `${protocol}//${window.location.host}`;
+    return `${window.location.protocol}//${window.location.host}`;
   }
   return 'http://127.0.0.1:5000';
 };
