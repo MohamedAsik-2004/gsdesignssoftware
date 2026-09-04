@@ -3,10 +3,14 @@ import cors from 'cors';
 import { createServer } from 'http';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { initSocket } from './socket';
 import { authRouter } from './routes/authRoutes';
 import { orderRouter } from './routes/orderRoutes';
 import { customerRouter, reportRouter } from './routes/customerRoutes';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
@@ -32,7 +36,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Serve frontend build static files if built dist folder exists
-const distPath = path.join(__dirname, '../../dist');
+const distPath = path.resolve(process.cwd(), 'dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
   app.get('*', (req, res, next) => {
